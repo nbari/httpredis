@@ -1,4 +1,4 @@
-use bytes::Bytes;
+// use bytes::Bytes;
 use chrono::prelude::*;
 use httpredis::options;
 use std::net::{IpAddr, Ipv4Addr};
@@ -7,9 +7,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufStream},
+    //    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufStream},
     net::TcpStream,
-    sync::{mpsc, Mutex},
+    sync::Mutex,
     time::timeout,
 };
 use tokio_native_tls::TlsConnector;
@@ -75,7 +75,7 @@ async fn main() {
 // state_handler return HTTP 100 if role:master otherwise 200
 // OK, otherwise HTTP 503 Service Unavailable
 async fn state_handler(
-    stream: Arc<tokio::sync::Mutex<tokio_native_tls::TlsStream<tokio::net::TcpStream>>>,
+    _stream: Arc<tokio::sync::Mutex<tokio_native_tls::TlsStream<tokio::net::TcpStream>>>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let rs = 0;
     match rs {

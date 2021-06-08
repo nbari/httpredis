@@ -8,7 +8,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use std::fs;
 use std::io::Read;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Redis {
     pub host: String,
     pub user: Option<String>,

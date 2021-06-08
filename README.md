@@ -39,15 +39,11 @@ This works very good, but if Redis is configured to use TLS, the
 
 `httpredis` is a web service that connects to Redis using TLS, when requesting
 `info replication` if role is `role:master` the service will return the HTTP
-status code `100`, otherwise if node is health `200`
-
-    HTTP 100 Continue: role:master
-    HTPP 200 OK:       node is healthy PING/PONG
+status code `200`.
 
 The `HAProxy` configuration can be:
 
     backend redis
         mode tcp
         option httpchk
-        http-check expect status 100
         default-server check port 36379

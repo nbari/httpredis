@@ -1,0 +1,26 @@
+[package]
+name = "httpredis"
+version = "0.1.0"
+authors = ["Nicolas Embriz <nbari@tequila.io>"]
+description = "HTTP status codes for Redis cluster using TLS"
+documentation = "https://github.com/nbari/httpredis/blob/master/README.md"
+homepage = "https://github.com/nbari/httpredis"
+repository = "https://github.com/nbari/httpredis"
+readme = "README.md"
+keywords = ["redis", "cluster", "sentinel", "http", "tls"]
+categories = ["database", "network-programming"]
+license = "BSD-3-Clause"
+edition = "2018"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+clap = "2.33"
+serde = { version ="1.0", features = ["derive"]}
+tokio = { version ="1", features = ["full"]}
+warp = "0.3"
+native-tls = "0.2"
+tokio-native-tls = "0.3.0"
+openssl = "0.10.34"
+rand = "0.8.3"
+bytes = "1"

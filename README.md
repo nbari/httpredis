@@ -1,12 +1,14 @@
 # httpredis
 
+[![build](https://github.com/nbari/httpredis/actions/workflows/rust.yml/badge.svg)](https://github.com/nbari/httpredis/actions/workflows/rust.yml)
+
 HTTP status codes for Redis Sentinel when using TLS.
 
 ## Why ?
 To offer high availability when using HAProxy and Redis + Sentinel are configured to use TLS.
 
 ## The problem to solve
-When not using TLS, HAproxy can be configured like this to find the current master:
+When not using TLS, HAProxy can be configured like this to find the current master:
 
     backend redis
         mode tcp
@@ -29,7 +31,7 @@ When not using TLS, HAproxy can be configured like this to find the current mast
         server redis2 10.0.1.12:6379
         server redis3 10.0.1.13:6379
 
-This works very good, but if the Redis cluster is configured to use TLS, the
+This works very good, but if Redis is configured to use TLS, the
 `option tcp-check` doesn't work since it doesn't support TLS.
 
 

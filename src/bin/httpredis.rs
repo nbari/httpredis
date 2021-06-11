@@ -1,4 +1,4 @@
-// use bytes::Bytes;
+use anyhow::Result;
 use chrono::prelude::*;
 use httpredis::options;
 use std::net::{IpAddr, Ipv4Addr};
@@ -48,31 +48,21 @@ async fn main() {
     warp::serve(state_route).run((addr, port)).await
 }
 
+#[derive(Debug)]
+struct CustomReject(anyhow::Error);
+
+impl warp::reject::Reject for CustomReject {}
+
 // state_handler return HTTP 100 if role:master otherwise 200
 // OK, otherwise HTTP 503 Service Unavailable
 async fn state_handler(redis: options::Redis) -> Result<impl warp::Reply, warp::Rejection> {
-    let stream = match timeout(Duration::from_secs(3), TcpStream::connect(&redis.host)).await {
-        Ok(conn) => match conn {
-            Ok(conn) => match TlsConnector::from(redis.tls)
-                .connect(&redis.host, conn)
-                .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    process::exit(1);
-                }
-            },
-            Err(e) => {
-                eprintln!("{}", e);
-                process::exit(1);
-            }
-        },
-        Err(e) => {
-            eprintln!("Timeout :{}", e);
-            process::exit(1);
-        }
-    };
+    let conn = timeout(Duration::from_secs(3), TcpStream::connect(&redis.host))
+        .await
+        .unwrap();
+    let stream = TlsConnector::from(redis.tls)
+        .connect(&redis.host, conn.unwrap())
+        .await
+        .unwrap();
 
     let mut buf = BufStream::new(stream);
 

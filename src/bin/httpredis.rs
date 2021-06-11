@@ -1,9 +1,11 @@
 // use bytes::Bytes;
 use chrono::prelude::*;
-use httpredis::options;
-use httpredis::options::Redis;
+use httpredis::{
+    errors::Error::{IOError, TimeoutError, TlsError},
+    options,
+    options::Redis,
+};
 use std::net::{IpAddr, Ipv4Addr};
-
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::{
@@ -11,8 +13,7 @@ use tokio::{
     net::TcpStream,
     time::timeout,
 };
-
-use httpredis::errors::Error::{IOError, TimeoutError};
+use tokio_native_tls::{TlsConnector, TlsStream};
 use warp::http::StatusCode;
 use warp::Filter;
 
@@ -48,10 +49,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // state_handler return HTTP 100 if role:master otherwise 200
 // OK, otherwise HTTP 503 Service Unavailable
 async fn state_handler(redis: options::Redis) -> Result<impl warp::Reply, warp::Rejection> {
-    let stream = timeout(Duration::from_secs(3), TcpStream::connect(&redis.host))
+    let conn = timeout(Duration::from_secs(3), TcpStream::connect(&redis.host))
         .await
         .map_err(TimeoutError)?
         .map_err(IOError)?;
+
+    let stream = TlsConnector::from(redis.tls.clone())
+        .connect(&redis.host, conn)
+        .await
+        .map_err(TlsError)?;
 
     let mut buf = BufStream::new(stream);
 
@@ -63,7 +69,7 @@ async fn state_handler(redis: options::Redis) -> Result<impl warp::Reply, warp::
 
 async fn check_master_status(
     redis: Redis,
-    buf: &mut BufStream<TcpStream>,
+    buf: &mut BufStream<TlsStream<TcpStream>>,
 ) -> Result<StatusCode, std::io::Error> {
     // AUTH
     if let Some(pass) = redis.pass {

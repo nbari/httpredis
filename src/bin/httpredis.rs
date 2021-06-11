@@ -1,7 +1,6 @@
-// use bytes::Bytes;
 use chrono::prelude::*;
 use httpredis::{
-    errors::Error::{IOError, TimeoutError, TlsError},
+    errors::Error::{Timeout, Tls, IO},
     options,
     options::Redis,
 };
@@ -51,19 +50,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn state_handler(redis: options::Redis) -> Result<impl warp::Reply, warp::Rejection> {
     let conn = timeout(Duration::from_secs(3), TcpStream::connect(&redis.host))
         .await
-        .map_err(TimeoutError)?
-        .map_err(IOError)?;
+        .map_err(Timeout)?
+        .map_err(IO)?;
 
     let stream = TlsConnector::from(redis.tls.clone())
         .connect(&redis.host, conn)
         .await
-        .map_err(TlsError)?;
+        .map_err(Tls)?;
 
     let mut buf = BufStream::new(stream);
 
-    let result = check_master_status(redis, &mut buf)
-        .await
-        .map_err(IOError)?;
+    let result = check_master_status(redis, &mut buf).await.map_err(IO)?;
     Ok(result)
 }
 

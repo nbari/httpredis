@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
 use clap::{App, Arg};
 use native_tls::{Certificate, Identity, TlsConnector};
-use openssl::pkcs12::Pkcs12;
-use openssl::pkey::{PKey, Private};
-use openssl::x509::X509;
+use openssl::{
+    pkcs12::Pkcs12,
+    pkey::{PKey, Private},
+    x509::X509,
+};
 use rand::{distributions::Alphanumeric, Rng};
-use std::fs;
-use std::io::Read;
+use std::{fs, io::Read, string::ToString};
 
 #[derive(Clone, Debug)]
 pub struct Redis {
@@ -163,9 +164,9 @@ pub fn new() -> Result<Redis> {
         format!("{}:6379", host)
     };
 
-    let user = matches.value_of("user").map(|p| p.to_string());
+    let user = matches.value_of("user").map(ToString::to_string);
 
-    let pass = matches.value_of("pass").map(|p| p.to_string());
+    let pass = matches.value_of("pass").map(ToString::to_string);
 
     Ok(Redis {
         host,

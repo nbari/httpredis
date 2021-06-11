@@ -1,28 +1,25 @@
 use anyhow::Result;
 use chrono::prelude::*;
-use httpredis::options;
-use std::net::{IpAddr, Ipv4Addr};
-use std::process;
-use std::str::FromStr;
-use std::time::Duration;
+use httpredis::{
+    options,
+    rejections::{handle_rejection, RequestTimeout, ServiceUnavailable},
+};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
     net::TcpStream,
     time::timeout,
 };
 use tokio_native_tls::TlsConnector;
-use warp::http::StatusCode;
-use warp::Filter;
+use warp::{http::StatusCode, Filter};
 
 #[tokio::main]
-async fn main() {
-    let redis: options::Redis = match options::new() {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("{}", e);
-            process::exit(1);
-        }
-    };
+async fn main() -> Result<()> {
+    let redis: options::Redis = options::new()?;
 
     let port = redis.port;
 
@@ -44,25 +41,27 @@ async fn main() {
     );
 
     let args = warp::any().map(move || redis.clone());
-    let state_route = warp::any().and(args).and_then(state_handler);
-    warp::serve(state_route).run((addr, port)).await
+
+    let state_route = warp::any()
+        .and(args)
+        .and_then(state_handler)
+        .recover(handle_rejection);
+
+    warp::serve(state_route).run((addr, port)).await;
+    Ok(())
 }
-
-#[derive(Debug)]
-struct CustomReject(anyhow::Error);
-
-impl warp::reject::Reject for CustomReject {}
 
 // state_handler return HTTP 100 if role:master otherwise 200
 // OK, otherwise HTTP 503 Service Unavailable
 async fn state_handler(redis: options::Redis) -> Result<impl warp::Reply, warp::Rejection> {
     let conn = timeout(Duration::from_secs(3), TcpStream::connect(&redis.host))
         .await
-        .unwrap();
+        .map_err(|_e| warp::reject::custom(RequestTimeout))?
+        .map_err(|_e| warp::reject::custom(ServiceUnavailable))?;
     let stream = TlsConnector::from(redis.tls)
-        .connect(&redis.host, conn.unwrap())
+        .connect(&redis.host, conn)
         .await
-        .unwrap();
+        .map_err(|_e| warp::reject::custom(ServiceUnavailable))?;
 
     let mut buf = BufStream::new(stream);
 

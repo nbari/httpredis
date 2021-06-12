@@ -1,4 +1,3 @@
-use anyhow::Result;
 use chrono::prelude::*;
 use httpredis::{
     options,
@@ -7,6 +6,7 @@ use httpredis::{
 };
 use std::{
     net::{IpAddr, Ipv4Addr},
+    process,
     str::FromStr,
     time::Duration,
 };
@@ -19,8 +19,14 @@ use tokio_native_tls::{TlsConnector, TlsStream};
 use warp::{http::StatusCode, Filter};
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let redis: options::Redis = options::new()?;
+async fn main() {
+    let redis: options::Redis = match options::new() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+    };
 
     let port = redis.port;
 
@@ -49,7 +55,6 @@ async fn main() -> Result<()> {
         .recover(handle_rejection);
 
     warp::serve(state_route).run((addr, port)).await;
-    Ok(())
 }
 
 // state_handler return HTTP 100 if role:master otherwise 200

@@ -70,7 +70,7 @@ pub fn new() -> Result<Redis> {
         .arg(
             Arg::with_name("redis")
                 .takes_value(true)
-                .default_value("127.0.0.1:36379")
+                .default_value("127.0.0.1:6379")
                 .help("redis host:port")
                 .long("host")
                 .required(true),

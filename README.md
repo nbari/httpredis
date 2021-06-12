@@ -46,4 +46,21 @@ The `HAProxy` configuration can be:
     backend redis
         mode tcp
         option httpchk
-        default-server check port 36379
+        default-server check inter 1s fall 2 rise 2 port 36379
+        server redis1 10.0.1.11:6379 ssl crt /path/to/redis.pem ca-file /path/to/ca.crt ssl verify none
+        server redis2 10.0.1.11:6379 ssl crt /path/to/redis.pem ca-file /path/to/ca.crt ssl verify none
+        server redis3 10.0.1.11:6379 ssl crt /path/to/redis.pem ca-file /path/to/ca.crt ssl verify none
+
+`redis.pem` is the `redis.crt` + `redis.key`:
+
+    $ cat redis.crt redis.key > redis.pem
+
+Every Redis node need to run `httpredis`:
+
+    $ cargo install httpredis
+
+Then run it like this:
+
+    httpredis --tls-ca-cert-file /path/to/ca.crt --tls-cert-file /path/to/redis.crt --tls-key-file /path/to/redis.key --pass secret
+
+> check `httpredis -h` for more options

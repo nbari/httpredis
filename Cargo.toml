@@ -23,3 +23,5 @@ native-tls = "0.2"
 tokio-native-tls = "0.3.0"
 openssl = "0.10.34"
 rand = "0.8.3"
+tokio-util = { version = "0.6", features = ["codec"] }
+futures = "0.3.15"

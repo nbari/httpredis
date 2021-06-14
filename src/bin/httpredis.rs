@@ -1,35 +1,47 @@
+use anyhow::{bail, Result};
 use chrono::prelude::*;
+use futures::{SinkExt, StreamExt};
 use httpredis::{
     options,
-    options::Redis,
-    rejections::{handle_rejection, RequestTimeout, ServiceUnavailable},
+    rejections::{handle_rejection, ServiceUnavailable},
 };
 use std::{
     net::{IpAddr, Ipv4Addr},
     process,
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
+    io::{split, ReadHalf, WriteHalf},
     net::TcpStream,
+    sync::Mutex,
     time::timeout,
 };
 use tokio_native_tls::{TlsConnector, TlsStream};
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use warp::{http::StatusCode, Filter};
+
+#[derive(Debug, Clone)]
+struct Client {
+    write_stream: Arc<Mutex<FramedWrite<WriteHalf<TlsStream<TcpStream>>, LinesCodec>>>,
+    read_stream: Arc<Mutex<FramedRead<ReadHalf<TlsStream<TcpStream>>, LinesCodec>>>,
+}
 
 #[tokio::main]
 async fn main() {
-    let redis: options::Redis = match options::new() {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("{}", e);
-            process::exit(1);
-        }
-    };
+    if let Err(err) = try_main().await {
+        eprintln!("ERROR: {}", err);
+        err.chain()
+            .skip(1)
+            .for_each(|cause| eprintln!("because: {}", cause));
+        process::exit(1);
+    }
+}
 
+async fn try_main() -> Result<()> {
+    let redis: options::Redis = options::new()?;
     let port = redis.port;
-
     let addr = if redis.v46 {
         // tcp46 or fallback to tcp4
         match IpAddr::from_str("::0") {
@@ -40,6 +52,38 @@ async fn main() {
         IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     };
 
+    // TCP connect
+    let conn = timeout(Duration::from_secs(3), TcpStream::connect(&redis.host)).await??;
+
+    // TLS
+    let stream = TlsConnector::from(redis.tls.clone())
+        .connect(&redis.host, conn)
+        .await?;
+
+    let (r, w) = split(stream);
+
+    let mut fr = FramedRead::new(r, LinesCodec::new());
+    let mut fw = FramedWrite::new(w, LinesCodec::new());
+
+    if let Some(pass) = redis.pass {
+        let msg = format!("AUTH {}\r\n", pass);
+        fw.send(msg).await?;
+
+        while let Some(line) = fr.next().await {
+            if let Ok(line) = line {
+                if line != "+OK" {
+                    bail!("AUTH failed");
+                }
+            }
+            break;
+        }
+    }
+
+    let client = Client {
+        write_stream: Arc::new(Mutex::new(fw)),
+        read_stream: Arc::new(Mutex::new(fr)),
+    };
+
     let now = Utc::now();
     println!(
         "{} - Listening on *:{}",
@@ -47,7 +91,7 @@ async fn main() {
         port
     );
 
-    let args = warp::any().map(move || redis.clone());
+    let args = warp::any().map(move || client.clone());
 
     let state_route = warp::any()
         .and(args)
@@ -55,84 +99,48 @@ async fn main() {
         .recover(handle_rejection);
 
     warp::serve(state_route).run((addr, port)).await;
+    Ok(())
 }
 
 // state_handler return HTTP 100 if role:master otherwise 200
 // OK, otherwise HTTP 503 Service Unavailable
-async fn state_handler(redis: options::Redis) -> Result<impl warp::Reply, warp::Rejection> {
-    let conn = timeout(Duration::from_secs(3), TcpStream::connect(&redis.host))
-        .await
-        .map_err(|e| warp::reject::custom(RequestTimeout(e.to_string())))?
-        .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
-
-    let stream = TlsConnector::from(redis.tls.clone())
-        .connect(&redis.host, conn)
-        .await
-        .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
-
-    let mut buf = BufStream::new(stream);
-
-    let result = check_master_status(redis, &mut buf)
-        .await
-        .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
-    Ok(result)
-}
-
-async fn check_master_status(
-    redis: Redis,
-    buf: &mut BufStream<TlsStream<TcpStream>>,
-) -> Result<StatusCode, std::io::Error> {
-    // AUTH
-    if let Some(pass) = redis.pass {
-        let msg = format!("AUTH {}", pass);
-        buf.write_all(msg.as_bytes()).await?;
-        buf.write_all(b"\r\n").await?;
-        buf.flush().await?;
-
-        let mut buffer = String::new();
-        buf.read_line(&mut buffer).await?;
-        if "+OK\r\n" != buffer {
-            return Ok(StatusCode::UNAUTHORIZED);
-        }
-    }
-
-    // role:master
-    buf.write_all(b"info replication\r\n").await?;
-    buf.flush().await?;
-
+async fn state_handler(client: Client) -> Result<impl warp::Reply, warp::Rejection> {
+    let mut tx = client.write_stream.lock().await;
+    let mut rx = client.read_stream.lock().await;
     let mut is_master = false;
-    let mut line = String::new();
-    loop {
-        line.clear();
-        buf.read_line(&mut line).await?;
-        if line.starts_with("role:master") {
+
+    let msg = "info replication";
+    tx.send(msg)
+        .await
+        .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
+    while let Some(line) = rx.next().await {
+        let line = line.map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
+        if line == "role:master" {
             is_master = true;
-        } else if line == "\r\n" {
             break;
         }
     }
+
     return if is_master {
-        // uptime
-        // to prevent having multiple masters
+        // check that uptime is at least 10 seconds to prevent having multiple masters
         // an old-master when starting can start has master before going into replicaof
-        buf.write_all(b"info server\r\n").await?;
-        buf.flush().await?;
-        let mut line = String::new();
-        loop {
-            line.clear();
-            buf.read_line(&mut line).await?;
+        let msg = "info server";
+        tx.send(msg)
+            .await
+            .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
+        while let Some(line) = rx.next().await {
+            let line = line.map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
             if line.starts_with("uptime_in_seconds:") {
                 let v: Vec<&str> = line.split_terminator(':').collect();
                 if v[1]
                     .trim()
                     .parse::<usize>()
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Cannot parse!"))?
+                    .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?
                     > 10
                 {
                     break;
                 }
-            } else if line == "\r\n" {
-                break;
+                return Ok(StatusCode::SERVICE_UNAVAILABLE);
             }
         }
         Ok(StatusCode::OK)

@@ -12,21 +12,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{
-    io::{split, ReadHalf, WriteHalf},
-    net::TcpStream,
-    sync::Mutex,
-    time::timeout,
-};
+use tokio::{net::TcpStream, sync::Mutex, time::timeout};
 use tokio_native_tls::{TlsConnector, TlsStream};
-use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+use tokio_util::codec::{Framed, LinesCodec};
 use warp::{http::StatusCode, Filter};
-
-#[derive(Debug, Clone)]
-struct Client {
-    write_stream: Arc<Mutex<FramedWrite<WriteHalf<TlsStream<TcpStream>>, LinesCodec>>>,
-    read_stream: Arc<Mutex<FramedRead<ReadHalf<TlsStream<TcpStream>>, LinesCodec>>>,
-}
 
 #[tokio::main]
 async fn main() {
@@ -60,16 +49,13 @@ async fn try_main() -> Result<()> {
         .connect(&redis.host, conn)
         .await?;
 
-    let (r, w) = split(stream);
-
-    let mut fr = FramedRead::new(r, LinesCodec::new());
-    let mut fw = FramedWrite::new(w, LinesCodec::new());
+    let mut frame_stream = Framed::new(stream, LinesCodec::new());
 
     if let Some(pass) = redis.pass {
         let msg = format!("AUTH {}\r\n", pass);
-        fw.send(msg).await?;
+        frame_stream.send(msg).await?;
 
-        while let Some(line) = fr.next().await {
+        while let Some(line) = frame_stream.next().await {
             if let Ok(line) = line {
                 if line != "+OK" {
                     bail!("AUTH failed");
@@ -79,10 +65,7 @@ async fn try_main() -> Result<()> {
         }
     }
 
-    let client = Client {
-        write_stream: Arc::new(Mutex::new(fw)),
-        read_stream: Arc::new(Mutex::new(fr)),
-    };
+    let client = Arc::new(Mutex::new(frame_stream));
 
     let now = Utc::now();
     println!(
@@ -104,16 +87,18 @@ async fn try_main() -> Result<()> {
 
 // state_handler return HTTP 100 if role:master otherwise 200
 // OK, otherwise HTTP 503 Service Unavailable
-async fn state_handler(client: Client) -> Result<impl warp::Reply, warp::Rejection> {
-    let mut tx = client.write_stream.lock().await;
-    let mut rx = client.read_stream.lock().await;
+async fn state_handler(
+    client: Arc<Mutex<Framed<TlsStream<TcpStream>, LinesCodec>>>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let mut stream = client.lock().await;
     let mut is_master = false;
 
     let msg = "info replication";
-    tx.send(msg)
+    stream
+        .send(msg)
         .await
         .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
-    while let Some(line) = rx.next().await {
+    while let Some(line) = stream.next().await {
         let line = line.map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
         if line == "role:master" {
             is_master = true;
@@ -125,10 +110,11 @@ async fn state_handler(client: Client) -> Result<impl warp::Reply, warp::Rejecti
         // check that uptime is at least 10 seconds to prevent having multiple masters
         // an old-master when starting can start has master before going into replicaof
         let msg = "info server";
-        tx.send(msg)
+        stream
+            .send(msg)
             .await
             .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
-        while let Some(line) = rx.next().await {
+        while let Some(line) = stream.next().await {
             let line = line.map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
             if line.starts_with("uptime_in_seconds:") {
                 let v: Vec<&str> = line.split_terminator(':').collect();

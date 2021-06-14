@@ -11,15 +11,6 @@ struct ErrorMessage {
 }
 
 #[derive(Debug)]
-pub struct RequestTimeout(pub String);
-impl Reject for RequestTimeout {}
-impl fmt::Display for RequestTimeout {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug)]
 pub struct ServiceUnavailable(pub String);
 impl Reject for ServiceUnavailable {}
 impl fmt::Display for ServiceUnavailable {
@@ -34,10 +25,7 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
     let code;
     let message;
 
-    if let Some(e) = err.find::<RequestTimeout>() {
-        code = StatusCode::REQUEST_TIMEOUT;
-        message = format!("Failed to connect, connection timed out: {}", e);
-    } else if let Some(e) = err.find::<ServiceUnavailable>() {
+    if let Some(e) = err.find::<ServiceUnavailable>() {
         code = StatusCode::SERVICE_UNAVAILABLE;
         message = format!("service unavailable: {}", e);
     } else {

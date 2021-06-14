@@ -55,13 +55,11 @@ async fn try_main() -> Result<()> {
         let msg = format!("AUTH {}\r\n", pass);
         frame_stream.send(msg).await?;
 
-        while let Some(line) = frame_stream.next().await {
-            if let Ok(line) = line {
-                if line != "+OK" {
-                    bail!("AUTH failed");
-                }
+        if let Some(line) = frame_stream.next().await {
+            let line = line.map_err(|e| e)?;
+            if line != "+OK" {
+                bail!("AUTH failed");
             }
-            break;
         }
     }
 

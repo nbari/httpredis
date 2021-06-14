@@ -1,6 +1,6 @@
 [package]
 name = "httpredis"
-version = "0.1.5"
+version = "0.1.6"
 authors = ["Nicolas Embriz <nbari@tequila.io>"]
 description = "HTTP status codes for Redis cluster using TLS"
 documentation = "https://github.com/nbari/httpredis/blob/master/README.md"

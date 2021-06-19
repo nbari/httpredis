@@ -92,10 +92,11 @@ async fn state_handler(
     let mut is_master = false;
 
     let msg = "info replication";
-    stream
-        .send(msg)
-        .await
-        .map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
+    if let Err(e) = stream.send(msg).await {
+        // TODO handle reconnect
+        eprintln!("ERROR connection closed: {}", e);
+        process::exit(1);
+    }
     while let Some(line) = stream.next().await {
         let line = line.map_err(|e| warp::reject::custom(ServiceUnavailable(e.to_string())))?;
         if line == "role:master" {
